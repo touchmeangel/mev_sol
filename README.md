@@ -1,2 +1,3 @@
 # mev_sol
-Solana MEV Bot
+Lightweight Solana MEV Bot that scans blockchains mempool for opportunities and exploits matches.
+
