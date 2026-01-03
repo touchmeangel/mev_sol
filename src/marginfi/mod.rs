@@ -1,7 +1,9 @@
+mod consts;
 mod events;
 mod macros;
 mod wrapped_i80f48;
 
+use consts::*;
 use events::*;
 use wrapped_i80f48::*;
 
@@ -44,7 +46,7 @@ impl Marginfi {
 
       for log in &response.value.logs {
         if let Some(event_data) = log.strip_prefix("Program data: ") {
-          if let Ok(event) = parse_anchor_event::<events::HealthPulseEvent>(event_data) {
+          if let Ok(event) = parse_anchor_event::<HealthPulseEvent>(event_data) {
             println!("HEALTH PULSE!");
             println!("  Account: {}", event.account);
             println!("  Transaction: {}", signature);

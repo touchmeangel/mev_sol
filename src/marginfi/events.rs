@@ -12,6 +12,7 @@ pub const ORACLE_OK: u32 = 4;
 assert_struct_size!(HealthCache, 304);
 assert_struct_align!(HealthCache, 8);
 #[repr(C)]
+#[derive(AnchorDeserialize, AnchorSerialize)]
 #[derive(Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone)]
 /// A read-only cache of the internal risk engine's information. Only valid in borrow/withdraw if
 /// the tx does not fail. To see the state in any context, e.g. to figure out if the risk engine is
@@ -136,5 +137,5 @@ impl HealthCache {
 #[event]
 pub struct HealthPulseEvent {
   pub account: Pubkey,
-  // pub health_cache: HealthCache,
+  pub health_cache: HealthCache,
 }

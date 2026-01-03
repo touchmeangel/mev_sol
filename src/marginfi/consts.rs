@@ -1,0 +1,1 @@
+pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;

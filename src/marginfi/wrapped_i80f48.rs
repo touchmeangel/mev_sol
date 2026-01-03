@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use anchor_lang::prelude::{
     borsh::{BorshDeserialize, BorshSerialize},
     *,
@@ -7,7 +8,7 @@ use std::fmt::{Debug, Formatter};
 
 #[repr(C, align(8))]
 #[derive(BorshDeserialize, BorshSerialize)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy, Pod, Zeroable)]
 pub struct WrappedI80F48 {
     pub value: [u8; 16],
 }
