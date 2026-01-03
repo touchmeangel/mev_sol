@@ -1764,6 +1764,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
+name = "liquidation_searcher"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "base64 0.22.1",
+ "dotenvy",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "litemap"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1815,21 +1830,6 @@ dependencies = [
  "keccak",
  "rand_core 0.6.4",
  "zeroize",
-]
-
-[[package]]
-name = "mev_sol"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anyhow",
- "base64 0.22.1",
- "dotenvy",
- "serde",
- "serde_json",
- "solana-client",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
