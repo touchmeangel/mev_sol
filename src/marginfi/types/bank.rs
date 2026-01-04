@@ -5,6 +5,7 @@ use crate::{
 use bytemuck::{Pod, Zeroable};
 
 use anchor_lang::prelude::Pubkey;
+use fixed::types::I80F48;
 
 use super::{BankCache, BankConfig, EmodeSettings};
 use super::super::consts::discriminators;
@@ -127,6 +128,22 @@ pub struct Bank {
 impl Bank {
   pub const LEN: usize = std::mem::size_of::<Bank>();
   pub const DISCRIMINATOR: [u8; 8] = discriminators::BANK;
+
+  pub fn get_liability_amount(&self, shares: I80F48) -> Option<I80F48> {
+    shares
+        .checked_mul(self.liability_share_value.into())
+  }
+
+  pub fn get_asset_amount(&self, shares: I80F48) -> Option<I80F48> {
+    shares
+        .checked_mul(self.asset_share_value.into())
+  }
+
+  pub fn get_display_asset(&self, amount: I80F48) -> Option<I80F48> {
+    let div = I80F48::from_num(10_i128.pow(self.mint_decimals as u32));
+    amount
+      .checked_div(div)
+  }
 }
 
 #[repr(u8)]

@@ -10,6 +10,7 @@ use bytemuck::Pod;
 use consts::*;
 use events::*;
 use wrapped_i80f48::*;
+use anyhow::Context;
 
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -80,17 +81,22 @@ impl Marginfi {
             println!("  Lended assets:");
 
             for balance in account.lending_account.get_active_balances_iter() {
-              let sdk_pubkey = Pubkey::new_from_array(balance.bank_pk.to_bytes());
-              let bank_account: Bank = match parse_account(&self.rpc_client, &sdk_pubkey).await {
-                Ok(account) => account,
-                Err(err) => {
-                  println!("error parsing bank data: {err}");
-                  continue;
-                },
-              };
-              println!("    Mint: {}", bank_account.mint);
-              println!("    Amount: {:?}", balance.asset_shares);
-              println!("    Bank: {}", balance.bank_pk);
+              let result = async {
+                let sdk_pubkey = Pubkey::new_from_array(balance.bank_pk.to_bytes());
+                let bank_account = parse_account::<Bank>(&self.rpc_client, &sdk_pubkey).await
+                  .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
+                let amount = bank_account.get_asset_amount(balance.asset_shares.into())
+                  .context("asset amount calculation failed")?;
+                let display_amount = bank_account.get_display_asset(amount)
+                  .context("asset calculation failed")?;
+                println!("    Mint: {}", bank_account.mint);
+                println!("    Amount: {:?}", display_amount);
+                println!("    Bank: {}", balance.bank_pk);
+
+                anyhow::Ok(())
+              }.await;
+
+              result?
             }
             println!();
 
@@ -157,7 +163,7 @@ fn parse_anchor_event<T: anchor_lang::AnchorDeserialize>(data: &str) -> anyhow::
 async fn parse_account<T: Pod>(
   rpc_client: &RpcClient,
   account_pubkey: &Pubkey,
-) -> Result<T, Box<dyn std::error::Error>> {
+) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
   let account_data = rpc_client.get_account_data(account_pubkey).await?;
   
   let data_without_discriminator = &account_data[8..];
