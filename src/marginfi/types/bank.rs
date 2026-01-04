@@ -13,8 +13,8 @@ use super::super::WrappedI80F48;
 assert_struct_size!(Bank, 1856);
 assert_struct_align!(Bank, 8);
 #[repr(C)]
-#[derive(Zeroable)]
-#[derive(Debug)]
+#[derive(Pod, Zeroable)]
+#[derive(Debug, Clone, Copy)]
 pub struct Bank {
   pub mint: Pubkey,
   pub mint_decimals: u8,

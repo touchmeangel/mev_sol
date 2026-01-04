@@ -20,7 +20,7 @@ use solana_sdk::pubkey::Pubkey;
 use tokio_stream::StreamExt;
 
 use crate::consts::MARGINFI_PROGRAM_ID;
-use crate::marginfi::types::MarginfiAccount;
+use crate::marginfi::types::{Bank, MarginfiAccount};
 
 pub struct Marginfi {
   pubsub: PubsubClient,
@@ -65,7 +65,6 @@ impl Marginfi {
           if let Ok(event) = parse_anchor_event::<LendingAccountWithdrawEvent>(event_data) {
             println!("WITHDRAW!");
             println!("  Account: {}", event.header.marginfi_account);
-            println!("  Mint: {}", event.mint);
             println!("  Transaction: {}", signature);
             
             let sdk_pubkey = Pubkey::new_from_array(event.header.marginfi_account.to_bytes());
@@ -78,10 +77,18 @@ impl Marginfi {
             };
             println!("ACCOUNT DATA");
             println!("  Owner: {}", account.authority);
-            println!("  Group: {}", account.group);
             println!("  Lended assets:");
 
             for balance in account.lending_account.get_active_balances_iter() {
+              let sdk_pubkey = Pubkey::new_from_array(balance.bank_pk.to_bytes());
+              let bank_account: Bank = match parse_account(&self.rpc_client, &sdk_pubkey).await {
+                Ok(account) => account,
+                Err(err) => {
+                  println!("error parsing bank data: {err}");
+                  continue;
+                },
+              };
+              println!("    Mint: {}", bank_account.mint);
               println!("    Amount: {:?}", balance.asset_shares);
               println!("    Bank: {}", balance.bank_pk);
             }
