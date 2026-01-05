@@ -1,6 +1,9 @@
-pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
+use anchor_lang::prelude::*;
+use pyth_solana_receiver_sdk::price_update::VerificationLevel;
+
+pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;
 
 pub const LIQUIDITY_VAULT_AUTHORITY_SEED: &str = "liquidity_vault_auth";
 pub const INSURANCE_VAULT_AUTHORITY_SEED: &str = "insurance_vault_auth";
@@ -49,6 +52,16 @@ pub const U32_MAX_DIV_10: I80F48 = I80F48!(429_496_730);
 pub const USDC_EXPONENT: i32 = 6;
 
 pub const MAX_ORACLE_KEYS: usize = 5;
+
+pub const NATIVE_STAKE_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
+
+pub const MIN_PYTH_PUSH_VERIFICATION_LEVEL: VerificationLevel = VerificationLevel::Full;
+
+pub const PYTH_ID: Pubkey = pubkey!("FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH");
+
+pub const SPL_SINGLE_POOL_ID: Pubkey = pubkey!("SVSPxpvHdN29nkVg9rPapPNDddN5DipNLRUFhyjFThE");
+
+pub const SWITCHBOARD_PULL_ID: Pubkey = pubkey!("SBondMDrcV3K4kxZR1HNVT7osZxAHVHgYXL5Ze1oMUv");
 
 /// Any balance below 1 SPL token amount is treated as none,
 /// this is to account for any artifacts resulting from binary fraction arithemtic.

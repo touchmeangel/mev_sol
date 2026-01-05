@@ -1,16 +1,20 @@
 mod instructions;
 mod types;
 mod consts;
+mod errors;
 mod events;
 mod macros;
+mod prelude;
 mod wrapped_i80f48;
 
 use anchor_lang::prelude::Pubkey;
 use instructions::*;
 use consts::*;
+pub use errors::*;
 use events::*;
 use solana_account_decoder::UiAccountEncoding;
 use solana_transaction_status_client_types::UiTransactionEncoding;
+pub use prelude::*;
 use wrapped_i80f48::*;
 
 use std::rc::Rc;

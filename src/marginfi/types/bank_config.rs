@@ -15,6 +15,7 @@ use super::super::WrappedI80F48;
 use super::super::consts::{
   ASSET_TAG_DEFAULT, MAX_ORACLE_KEYS,
   TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+  MAX_PYTH_ORACLE_AGE
 };
 
 assert_struct_size!(BankConfig, 544);
@@ -89,6 +90,16 @@ pub struct BankConfig {
   pub fixed_price: WrappedI80F48,
 
   pub _padding1: [u8; 16],
+}
+
+impl BankConfig {
+  #[inline]
+  pub fn get_oracle_max_age(&self) -> u64 {
+      match (self.oracle_max_age, self.oracle_setup) {
+          (0, OracleSetup::PythPushOracle) => MAX_PYTH_ORACLE_AGE,
+          (n, _) => n as u64,
+      }
+  }
 }
 
 impl Default for BankConfig {
