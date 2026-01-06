@@ -7,6 +7,7 @@ mod macros;
 mod prelude;
 mod wrapped_i80f48;
 
+use anchor_lang::prelude::sysvar::clock;
 use bytemuck::Pod;
 use instructions::*;
 use consts::*;
@@ -21,7 +22,7 @@ use std::rc::Rc;
 use fixed::types::I80F48;
 use anyhow::Context;
 
-use anchor_lang::prelude::Pubkey;
+use anchor_lang::prelude::{Clock, Pubkey, SolanaSysvar};
 use anchor_client::solana_sdk::commitment_config::CommitmentConfig;
 use solana_rpc_client_types::config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
@@ -31,14 +32,15 @@ use anchor_client::solana_sdk::signature::Keypair;
 use tokio_stream::StreamExt;
 
 use crate::consts::MARGINFI_PROGRAM_ID;
-use crate::marginfi::types::{Bank, MarginfiAccount};
+use crate::marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter};
 use crate::utils::parse_account;
 
 pub struct Marginfi {
   pubsub: PubsubClient,
   rpc_client: RpcClient,
   client: Client<Rc<Keypair>>,
-  program: Program<Rc<Keypair>>
+  program: Program<Rc<Keypair>>,
+  clock: Clock
 }
 
 impl Marginfi {
@@ -47,8 +49,12 @@ impl Marginfi {
     let payer = Rc::new(Keypair::new());
     let client = Client::new(Cluster::Custom(http_url, ws_url), payer);
     let program = client.program(MARGINFI_PROGRAM_ID)?;
+    let rpc_client = program.rpc();
 
-    anyhow::Ok(Self { pubsub, rpc_client: program.rpc(), client, program })
+    let clock_data = rpc_client.get_account_data(&clock::ID).await?;
+    let clock: Clock = bincode::deserialize(&clock_data)?;
+
+    anyhow::Ok(Self { pubsub, rpc_client, client, program, clock })
   }
 
   pub async fn listen_for_targets(&self) -> anyhow::Result<()> {
@@ -89,13 +95,13 @@ impl Marginfi {
 
   async fn handle_account(&self, account_pubkey: &anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
     // health_cache.prices !!!
-    let health_cache = self.fetch_health_cache(*account_pubkey).await?;
+    // let health_cache = self.lending_account_pulse_health(*account_pubkey).await?;
 
     let account = self.parse_account::<MarginfiAccount>(account_pubkey).await
       .map_err(|e| anyhow::anyhow!("invalid account data: {}", e))?;
     println!("ACCOUNT DATA");
     println!("  Owner: {}", account.authority);
-    println!("  Lended assets ({:?}$):", health_cache.asset_value);
+    println!("  Lended assets ({:?}$):", account.health_cache.asset_value);
 
     for balance in account.lending_account.get_active_balances_iter() {
       let result = async {
@@ -104,8 +110,10 @@ impl Marginfi {
           return anyhow::Ok(());
         }
 
-        let bank_account = self.parse_account::<Bank>(account_pubkey).await
+        let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
           .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
+        let price_feed = OraclePriceFeedAdapter::try_from_bank(&bank_account, &[], &self.clock)?;
+
         let amount = bank_account.get_asset_amount(asset_shares)
           .context("asset amount calculation failed")?;
         let display_amount = bank_account.get_display_asset(amount)
@@ -120,7 +128,7 @@ impl Marginfi {
       result?
     }
 
-    println!("  Borrowed assets ({:?}$):", health_cache.liability_value);
+    println!("  Borrowed assets ({:?}$):", account.health_cache.liability_value);
     for balance in account.lending_account.get_active_balances_iter() {
       let result = async {
         let liability_shares: I80F48 = balance.liability_shares.into();
@@ -128,8 +136,7 @@ impl Marginfi {
           return anyhow::Ok(());
         }
 
-        let sdk_pubkey = Pubkey::new_from_array(balance.bank_pk.to_bytes());
-        let bank_account = self.parse_account::<Bank>(&sdk_pubkey).await
+        let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
           .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
         let amount = bank_account.get_liability_amount(liability_shares)
           .context("asset amount calculation failed")?;
@@ -148,7 +155,7 @@ impl Marginfi {
     anyhow::Ok(())
   }
 
-  async fn fetch_health_cache(&self, account_pubkey: Pubkey) -> anyhow::Result<HealthCache> {
+  async fn lending_account_pulse_health(&self, account_pubkey: Pubkey) -> anyhow::Result<HealthCache> {
     let tx = self.program.request()
       .accounts(PulseHealthAccounts { marginfi_account: account_pubkey })
       .args(PulseHealth)
@@ -190,7 +197,6 @@ impl Marginfi {
     account_pubkey: &Pubkey,
   ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
     let account_data = self.rpc_client.get_account_data(account_pubkey).await?;
-    
     parse_account(&account_data, account_pubkey)
   }
 

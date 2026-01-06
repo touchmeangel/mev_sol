@@ -2135,6 +2135,7 @@ dependencies = [
  "anchor-spl",
  "anyhow",
  "base64 0.22.1",
+ "bincode",
  "bytemuck",
  "dotenvy",
  "enum_dispatch",
