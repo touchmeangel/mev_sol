@@ -2,7 +2,6 @@ use super::super::consts::{
   MIN_PYTH_PUSH_VERIFICATION_LEVEL, NATIVE_STAKE_ID, PYTH_ID, SPL_SINGLE_POOL_ID,
   SWITCHBOARD_PULL_ID,
 };
-// use super::bank_config::BankConfig;
 use anchor_lang::prelude::*;
 use anchor_client::solana_sdk::{borsh::try_from_slice_unchecked, stake::state::StakeStateV2};
 use crate::{check, check_eq, debug, live, math_error};
@@ -77,12 +76,8 @@ impl OraclePriceFeedAdapter {
       let bank_config = &bank.config;
       match bank_config.oracle_setup {
           OracleSetup::None => Err(MarginfiError::OracleNotSetup.into()),
-          OracleSetup::PythLegacy => {
-              panic!("pyth legacy is deprecated");
-          }
-          OracleSetup::SwitchboardV2 => {
-              panic!("swb v2 is deprecated");
-          }
+          OracleSetup::PythLegacy => Err(MarginfiError::OracleNotSetup.into()), // Deprecated
+          OracleSetup::SwitchboardV2 => Err(MarginfiError::OracleNotSetup.into()), // Deprecated
           OracleSetup::PythPushOracle => {
               check!(ais.len() == 1, MarginfiError::WrongNumberOfOracleAccounts);
 
@@ -396,12 +391,8 @@ impl OraclePriceFeedAdapter {
               );
               Ok(())
           }
-          OracleSetup::PythLegacy => {
-              panic!("pyth legacy is deprecated");
-          }
-          OracleSetup::SwitchboardV2 => {
-              panic!("swb v2 is deprecated");
-          }
+          OracleSetup::PythLegacy => Err(MarginfiError::OracleNotSetup.into()), // Deprecated
+          OracleSetup::SwitchboardV2 => Err(MarginfiError::OracleNotSetup.into()), // Deprecated
           OracleSetup::PythPushOracle => {
               check!(
                   oracle_ais.len() == 1,
@@ -673,7 +664,7 @@ pub fn parse_swb_ignore_alignment(data: Ref<&mut [u8]>) -> MarginfiResult<PullFe
       return err!(MarginfiError::SwitchboardInvalidAccount);
   }
 
-  if data[..8] != PullFeedAccountData::DISCRIMINATOR {
+  if data[..8] != PullFeedAccountData::DISCRIMINATOR[..8] {
       return err!(MarginfiError::SwitchboardInvalidAccount);
   }
 
