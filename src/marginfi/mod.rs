@@ -112,7 +112,10 @@ impl Marginfi {
 
         let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
           .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
-        let price_feed = OraclePriceFeedAdapter::try_from_bank(&bank_account, &[], &self.clock)?;
+        println!("    Oracle: {:?}", bank_account.config.oracle_setup);
+        // bank_account.config.oracle_keys[0]
+        
+        // let price_feed = OraclePriceFeedAdapter::try_from_bank(&bank_account, &[], &self.clock)?;
 
         let amount = bank_account.get_asset_amount(asset_shares)
           .context("asset amount calculation failed")?;
@@ -197,7 +200,7 @@ impl Marginfi {
     account_pubkey: &Pubkey,
   ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
     let account_data = self.rpc_client.get_account_data(account_pubkey).await?;
-    parse_account(&account_data, account_pubkey)
+    parse_account(&account_data)
   }
 
     // /// Sum of all liability shares held by all borrowers in this bank.

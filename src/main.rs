@@ -19,7 +19,7 @@ async fn main() {
   }.await;
 
   if let Err(err) = result {
-    eprintln!("error occurred during execution: {err}");
+    eprintln!("Error: {err}");
     
     err.chain()
         .skip(1)

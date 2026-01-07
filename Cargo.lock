@@ -2145,6 +2145,7 @@ dependencies = [
  "pyth-solana-receiver-sdk",
  "serde",
  "serde_json",
+ "solana-account",
  "solana-account-decoder",
  "solana-pubsub-client",
  "solana-rpc-client",
