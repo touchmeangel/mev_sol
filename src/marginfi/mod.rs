@@ -32,7 +32,7 @@ use anchor_client::solana_sdk::signature::Keypair;
 use tokio_stream::StreamExt;
 
 use crate::consts::MARGINFI_PROGRAM_ID;
-use crate::marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig};
+use crate::marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, PriceAdapter};
 use crate::utils::parse_account;
 
 pub struct Marginfi {
@@ -112,11 +112,12 @@ impl Marginfi {
 
         let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
           .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
-        println!("    Oracle: {:?}", bank_account.config.oracle_setup);
-        // bank_account.config.oracle_keys[0]
-        
+
         let config = OraclePriceFeedAdapterConfig::load_with_clock(&self.rpc_client, &bank_account, &self.clock).await?;
         let price_feed = OraclePriceFeedAdapter::try_from_config(config)?;
+        let price = price_feed.get_price_of_type(types::OraclePriceType::RealTime, Some(types::PriceBias::Low), bank_account.config.oracle_max_confidence)?;
+
+        println!("    Price: {:?}", price);
 
         let amount = bank_account.get_asset_amount(asset_shares)
           .context("asset amount calculation failed")?;
