@@ -75,7 +75,10 @@ impl MarginfiUserAccount {
         let asset = bank.bank.get_asset_amount(balance.asset_shares.into())
           .context("asset shares calculation failed")?;
     
-        let asset_value = asset.checked_mul(price)
+        let asset_value_with_decimals = asset.checked_mul(price)
+          .context("asset with decimals value calculation failed")?;
+
+        let asset_value = bank.bank.get_display_asset(asset_value_with_decimals)
           .context("asset value calculation failed")?;
     
         anyhow::Ok(acc + asset_value)
@@ -100,13 +103,20 @@ impl MarginfiUserAccount {
         let liability = bank.bank.get_asset_amount(balance.liability_shares.into())
           .context("liability shares calculation failed")?;
     
-        let liability_value = liability.checked_mul(price)
+        let liability_value_with_decimals = liability.checked_mul(price)
+          .context("liability with decimals value calculation failed")?;
+
+        let liability_value = bank.bank.get_display_asset(liability_value_with_decimals)
           .context("liability value calculation failed")?;
-    
+
         anyhow::Ok(acc + liability_value)
       })?;
 
     anyhow::Ok(total_liability_value)
+  }
+
+  pub fn get_bank(&self, pubkey: &Pubkey) -> Option<&Bank> {
+    self.banks.get(pubkey).map(|b| &b.bank)
   }
 }
 
