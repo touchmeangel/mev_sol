@@ -1,5 +1,4 @@
 use bytemuck::Pod;
-use anchor_lang::prelude::Pubkey;
 
 pub fn parse_account<T: Pod>(
   data: &[u8],

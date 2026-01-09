@@ -1,4 +1,5 @@
 mod instructions;
+mod user;
 mod types;
 mod consts;
 mod errors;
@@ -8,7 +9,6 @@ mod prelude;
 mod wrapped_i80f48;
 
 use anchor_lang::prelude::sysvar::clock;
-use bytemuck::Pod;
 use instructions::*;
 use consts::*;
 pub use errors::*;
@@ -16,13 +16,11 @@ use events::*;
 use solana_account_decoder::UiAccountEncoding;
 use solana_transaction_status_client_types::UiTransactionEncoding;
 use wrapped_i80f48::*;
+use user::*;
 
 use std::rc::Rc;
 
-use fixed::types::I80F48;
-use anyhow::Context;
-
-use anchor_lang::prelude::{Clock, Pubkey, SolanaSysvar};
+use anchor_lang::prelude::{Clock, Pubkey};
 use anchor_client::solana_sdk::commitment_config::CommitmentConfig;
 use solana_rpc_client_types::config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
@@ -30,6 +28,7 @@ use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use anchor_client::{Client, Cluster, Program};
 use anchor_client::solana_sdk::signature::Keypair;
 use tokio_stream::StreamExt;
+use std::time::Instant;
 
 use crate::consts::MARGINFI_PROGRAM_ID;
 use crate::marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, PriceAdapter};
@@ -94,68 +93,11 @@ impl Marginfi {
   }
 
   async fn handle_account(&self, account_pubkey: &anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
-    // health_cache.prices !!!
-    // let health_cache = self.lending_account_pulse_health(*account_pubkey).await?;
-
-    let account = self.parse_account::<MarginfiAccount>(account_pubkey).await
-      .map_err(|e| anyhow::anyhow!("invalid account data: {}", e))?;
+    let account = MarginfiUserAccount::from_pubkey(&self.rpc_client, account_pubkey, &self.clock).await?;
+    let marginfi_account = account.account();
     println!("ACCOUNT DATA");
-    println!("  Owner: {}", account.authority);
-    println!("  Lended assets ({:?}$):", account.health_cache.asset_value);
-
-    for balance in account.lending_account.get_active_balances_iter() {
-      let result = async {
-        let asset_shares: I80F48 = balance.asset_shares.into();
-        if asset_shares.is_zero() {
-          return anyhow::Ok(());
-        }
-
-        let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
-          .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
-
-        let config = OraclePriceFeedAdapterConfig::load_with_clock(&self.rpc_client, &bank_account, &self.clock).await?;
-        let price_feed = OraclePriceFeedAdapter::try_from_config(config)?;
-        let price = price_feed.get_price_of_type(types::OraclePriceType::RealTime, Some(types::PriceBias::Low), bank_account.config.oracle_max_confidence)?;
-
-        println!("    Price: {:?}", price);
-
-        let amount = bank_account.get_asset_amount(asset_shares)
-          .context("asset amount calculation failed")?;
-        let display_amount = bank_account.get_display_asset(amount)
-          .context("asset calculation failed")?;
-        println!("    Mint: {}", bank_account.mint);
-        println!("    Amount: {:?}", display_amount);
-        println!("    ---------------------------");
-
-        anyhow::Ok(())
-      }.await;
-
-      result?
-    }
-
-    println!("  Borrowed assets ({:?}$):", account.health_cache.liability_value);
-    for balance in account.lending_account.get_active_balances_iter() {
-      let result = async {
-        let liability_shares: I80F48 = balance.liability_shares.into();
-        if liability_shares.is_zero() {
-          return anyhow::Ok(());
-        }
-
-        let bank_account = self.parse_account::<Bank>(&balance.bank_pk).await
-          .map_err(|e| anyhow::anyhow!("invalid bank account data: {}", e))?;
-        let amount = bank_account.get_liability_amount(liability_shares)
-          .context("asset amount calculation failed")?;
-        let display_amount = bank_account.get_display_asset(amount)
-          .context("asset calculation failed")?;
-        println!("    Mint: {}", bank_account.mint);
-        println!("    Amount: {:?}", display_amount);
-        println!("    ---------------------------");
-
-        anyhow::Ok(())
-      }.await;
-
-      result?
-    }
+    println!("  Owner: {}", marginfi_account.authority);
+    println!("  Lended assets ({:?}$):", marginfi_account.health_cache.asset_value);
 
     anyhow::Ok(())
   }
@@ -195,14 +137,6 @@ impl Marginfi {
     }
 
     anyhow::bail!("HealthPulseEvent not found after simulation")
-  }
-
-  async fn parse_account<T: Pod>(
-    &self,
-    account_pubkey: &Pubkey,
-  ) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
-    let account_data = self.rpc_client.get_account_data(account_pubkey).await?;
-    parse_account(&account_data)
   }
 
     // /// Sum of all liability shares held by all borrowers in this bank.
