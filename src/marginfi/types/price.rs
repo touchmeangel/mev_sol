@@ -59,13 +59,38 @@ pub enum OraclePriceFeedAdapterConfigError {
   RpcError,
 }
 
-async fn get_account(
+async fn get_multiple_accounts(
   client: &RpcClient,
-  key: &Pubkey,
-) -> anyhow::Result<solana_account::Account> {
-  client
-    .get_account(key).await
-    .map_err(|e| anyhow::anyhow!(OraclePriceFeedAdapterConfigError::RpcError).context(e))
+  keys: &[Pubkey],
+) -> anyhow::Result<Vec<solana_account::Account>> {
+  const BATCH_SIZE: usize = 100;
+  
+  if keys.is_empty() {
+    return Ok(Vec::new());
+  }
+  
+  let mut all_accounts = Vec::with_capacity(keys.len());
+  
+  for chunk in keys.chunks(BATCH_SIZE) {
+    let accounts = client
+      .get_multiple_accounts(chunk)
+      .await
+      .map_err(|e| anyhow::anyhow!(OraclePriceFeedAdapterConfigError::RpcError).context(e))?;
+    
+    let accounts: Vec<_> = accounts
+      .into_iter()
+      .enumerate()
+      .map(|(i, maybe_account)| -> anyhow::Result<_> {  // Explicitly specify anyhow::Result
+        maybe_account.ok_or_else(|| {
+          anyhow::anyhow!("Oracle account not found: {}", chunk[i])
+        })
+      })
+      .collect::<anyhow::Result<Vec<_>>>()?;
+    
+    all_accounts.extend(accounts);
+  }
+  
+  Ok(all_accounts)
 }
 
 
@@ -97,58 +122,121 @@ pub struct OraclePriceFeedAdapterConfig<'info> {
 }
 
 impl<'info> OraclePriceFeedAdapterConfig<'info> {
-  pub async fn load_with_clock_and_max_age(
+  pub async fn load_multiple_with_clock(
     client: &RpcClient,
-    bank: &'info Bank,
+    banks: &'info [Bank],
+    clock: &'info Clock
+  ) -> anyhow::Result<Vec<Self>> {
+    let max_ages: Vec<u64> = banks
+      .iter()
+      .map(|bank| bank.config.get_oracle_max_age())
+      .collect();
+    
+    Self::load_multiple_with_clock_and_max_ages(client, banks, clock, &max_ages).await
+  }
+
+  pub async fn load_multiple_with_clock_and_max_ages(
+    client: &RpcClient,
+    banks: &'info [Bank],
     clock: &'info Clock,
-    max_age: u64
-  ) -> anyhow::Result<Self> {
-    let bank_config = &bank.config;
+    max_ages: &[u64]
+  ) -> anyhow::Result<Vec<Self>> {
+    if banks.len() != max_ages.len() {
+      return Err(anyhow::anyhow!("banks and max_ages must have same length"));
+    }
 
-    let accounts = match bank_config.oracle_setup {
-      OracleSetup::None => {
-        return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
-      }
-      OracleSetup::PythLegacy => {
-        return Err(anyhow::anyhow!(ErrorCode::Deprecated));
-      }
-      OracleSetup::SwitchboardV2 => {
-        return Err(anyhow::anyhow!(ErrorCode::Deprecated));
-      }
-      OracleSetup::PythPushOracle => {
-        let price = get_account(client, &bank_config.oracle_keys[0]).await?;
-        OracleAccounts::PythPush { price }
-      }
-      OracleSetup::SwitchboardPull => {
-        let oracle = get_account(client, &bank_config.oracle_keys[0]).await?;
-        OracleAccounts::SwitchboardPull { oracle }
-      }
-      OracleSetup::StakedWithPythPush => {
-        let price = get_account(client, &bank_config.oracle_keys[0]).await?;
-        let lst_mint_account = get_account(client, &bank_config.oracle_keys[1]).await?;
-        let stake_state = get_account(client, &bank_config.oracle_keys[2]).await?;
-
-        let lst_mint = Mint::try_deserialize(&mut (&lst_mint_account.data as &[u8]))?;
-        OracleAccounts::StakedWithPythPush {
-          price,
-          lst_mint,
-          stake_state,
+    // Step 1: Collect all oracle pubkeys needed across all banks
+    let mut all_oracle_keys = Vec::new();
+    let mut oracle_key_ranges = Vec::new(); // Track which keys belong to which bank
+    
+    for bank in banks {
+      let start_idx = all_oracle_keys.len();
+      
+      match bank.config.oracle_setup {
+        OracleSetup::None => {
+          return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
+        }
+        OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
+          return Err(anyhow::anyhow!(ErrorCode::Deprecated));
+        }
+        OracleSetup::PythPushOracle | OracleSetup::SwitchboardPull => {
+          all_oracle_keys.push(bank.config.oracle_keys[0]);
+        }
+        OracleSetup::StakedWithPythPush => {
+          all_oracle_keys.extend_from_slice(&bank.config.oracle_keys[0..3]);
+        }
+        OracleSetup::KaminoPythPush | OracleSetup::KaminoSwitchboardPull => {
+          all_oracle_keys.extend_from_slice(&bank.config.oracle_keys[0..2]);
+        }
+        OracleSetup::Fixed => {
         }
       }
-      OracleSetup::KaminoPythPush => {
-        let price = get_account(client, &bank_config.oracle_keys[0]).await?;
-        let reserve = get_account(client, &bank_config.oracle_keys[1]).await?;
-        OracleAccounts::KaminoPythPush { price, reserve }
-      }
-      OracleSetup::KaminoSwitchboardPull => {
-        let oracle = get_account(client, &bank_config.oracle_keys[0]).await?;
-        let reserve = get_account(client, &bank_config.oracle_keys[1]).await?;
-        OracleAccounts::KaminoSwitchboardPull { oracle, reserve }
-      }
-      OracleSetup::Fixed => OracleAccounts::None,
+      
+      let end_idx = all_oracle_keys.len();
+      oracle_key_ranges.push((start_idx, end_idx));
+    }
+
+    let oracle_accounts = if all_oracle_keys.is_empty() {
+      Vec::new()
+    } else {
+      get_multiple_accounts(client, &all_oracle_keys).await?
     };
 
-    Ok(Self { bank, accounts, clock, max_age })
+    let mut configs = Vec::with_capacity(banks.len());
+    
+    for (i, bank) in banks.iter().enumerate() {
+      let (start_idx, end_idx) = oracle_key_ranges[i];
+      let bank_oracle_accounts = &oracle_accounts[start_idx..end_idx];
+      
+      let accounts = match bank.config.oracle_setup {
+        OracleSetup::None => {
+          return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
+        }
+        OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
+          return Err(anyhow::anyhow!(ErrorCode::Deprecated));
+        }
+        OracleSetup::PythPushOracle => {
+          let price = bank_oracle_accounts[0].clone();
+          OracleAccounts::PythPush { price }
+        }
+        OracleSetup::SwitchboardPull => {
+          let oracle = bank_oracle_accounts[0].clone();
+          OracleAccounts::SwitchboardPull { oracle }
+        }
+        OracleSetup::StakedWithPythPush => {
+          let price = bank_oracle_accounts[0].clone();
+          let lst_mint_account = bank_oracle_accounts[1].clone();
+          let stake_state = bank_oracle_accounts[2].clone();
+          
+          let lst_mint = Mint::try_deserialize(&mut (&lst_mint_account.data as &[u8]))?;
+          OracleAccounts::StakedWithPythPush {
+            price,
+            lst_mint,
+            stake_state,
+          }
+        }
+        OracleSetup::KaminoPythPush => {
+          let price = bank_oracle_accounts[0].clone();
+          let reserve = bank_oracle_accounts[1].clone();
+          OracleAccounts::KaminoPythPush { price, reserve }
+        }
+        OracleSetup::KaminoSwitchboardPull => {
+          let oracle = bank_oracle_accounts[0].clone();
+          let reserve = bank_oracle_accounts[1].clone();
+          OracleAccounts::KaminoSwitchboardPull { oracle, reserve }
+        }
+        OracleSetup::Fixed => OracleAccounts::None,
+      };
+      
+      configs.push(Self {
+        bank,
+        accounts,
+        clock,
+        max_age: max_ages[i],
+      });
+    }
+
+    Ok(configs)
   }
 
   pub async fn load_with_clock(
@@ -157,6 +245,22 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
     clock: &'info Clock
   ) -> anyhow::Result<Self> {
     Self::load_with_clock_and_max_age(client, bank, clock, bank.config.get_oracle_max_age()).await
+  }
+
+  pub async fn load_with_clock_and_max_age(
+    client: &RpcClient,
+    bank: &'info Bank,
+    clock: &'info Clock,
+    max_age: u64
+  ) -> anyhow::Result<Self> {
+    let mut configs = Self::load_multiple_with_clock_and_max_ages(
+      client,
+      std::slice::from_ref(bank),
+      clock,
+      &[max_age]
+    ).await?;
+    
+    Ok(configs.remove(0))
   }
 }
 
