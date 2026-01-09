@@ -31,8 +31,6 @@ use tokio_stream::StreamExt;
 use std::time::Instant;
 
 use crate::consts::MARGINFI_PROGRAM_ID;
-use crate::marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, PriceAdapter};
-use crate::utils::parse_account;
 
 pub struct Marginfi {
   pubsub: PubsubClient,
@@ -93,9 +91,11 @@ impl Marginfi {
   }
 
   async fn handle_account(&self, account_pubkey: &anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
+    let start = Instant::now();
     let account = MarginfiUserAccount::from_pubkey(&self.rpc_client, account_pubkey, &self.clock).await?;
     let marginfi_account = account.account();
-    println!("ACCOUNT DATA");
+    let duration = start.elapsed();
+    println!("ACCOUNT DATA ({:?})", duration);
     println!("  Owner: {}", marginfi_account.authority);
     println!("  Lended assets ({:?}$):", marginfi_account.health_cache.asset_value);
 

@@ -144,15 +144,15 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
     if banks.len() != max_ages.len() {
       return Err(anyhow::anyhow!("banks and max_ages must have same length"));
     }
-
-    // Step 1: Collect all oracle pubkeys needed across all banks
-    let mut all_oracle_keys = Vec::new();
-    let mut oracle_key_ranges = Vec::new(); // Track which keys belong to which bank
+  
+    let mut oracle_key_to_index: std::collections::HashMap<Pubkey, usize> = std::collections::HashMap::new();
+    let mut unique_oracle_keys = Vec::new();
+    let mut bank_oracle_mappings = Vec::new();
     
     for bank in banks {
-      let start_idx = all_oracle_keys.len();
+      let mut bank_indices = Vec::new();
       
-      match bank.config.oracle_setup {
+      let keys = match bank.config.oracle_setup {
         OracleSetup::None => {
           return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
         }
@@ -160,33 +160,48 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
           return Err(anyhow::anyhow!(ErrorCode::Deprecated));
         }
         OracleSetup::PythPushOracle | OracleSetup::SwitchboardPull => {
-          all_oracle_keys.push(bank.config.oracle_keys[0]);
+          vec![bank.config.oracle_keys[0]]
         }
         OracleSetup::StakedWithPythPush => {
-          all_oracle_keys.extend_from_slice(&bank.config.oracle_keys[0..3]);
+          bank.config.oracle_keys[0..3].to_vec()
         }
         OracleSetup::KaminoPythPush | OracleSetup::KaminoSwitchboardPull => {
-          all_oracle_keys.extend_from_slice(&bank.config.oracle_keys[0..2]);
+          bank.config.oracle_keys[0..2].to_vec()
         }
         OracleSetup::Fixed => {
+          vec![]
         }
+      };
+      
+      // Map each key to its index in unique_oracle_keys
+      for key in keys {
+        let idx = *oracle_key_to_index.entry(key).or_insert_with(|| {
+          let idx = unique_oracle_keys.len();
+          unique_oracle_keys.push(key);
+          idx
+        });
+        bank_indices.push(idx);
       }
       
-      let end_idx = all_oracle_keys.len();
-      oracle_key_ranges.push((start_idx, end_idx));
+      bank_oracle_mappings.push(bank_indices);
     }
-
-    let oracle_accounts = if all_oracle_keys.is_empty() {
+  
+    // Step 2: Fetch all unique oracle accounts in one batch
+    let oracle_accounts = if unique_oracle_keys.is_empty() {
       Vec::new()
     } else {
-      get_multiple_accounts(client, &all_oracle_keys).await?
+      get_multiple_accounts(client, &unique_oracle_keys).await?
     };
-
+  
     let mut configs = Vec::with_capacity(banks.len());
     
     for (i, bank) in banks.iter().enumerate() {
-      let (start_idx, end_idx) = oracle_key_ranges[i];
-      let bank_oracle_accounts = &oracle_accounts[start_idx..end_idx];
+      let bank_indices = &bank_oracle_mappings[i];
+      
+      let bank_oracle_accounts: Vec<_> = bank_indices
+        .iter()
+        .map(|&idx| oracle_accounts[idx].clone())
+        .collect();
       
       let accounts = match bank.config.oracle_setup {
         OracleSetup::None => {
@@ -196,34 +211,34 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
           return Err(anyhow::anyhow!(ErrorCode::Deprecated));
         }
         OracleSetup::PythPushOracle => {
-          let price = bank_oracle_accounts[0].clone();
-          OracleAccounts::PythPush { price }
+          OracleAccounts::PythPush { 
+            price: bank_oracle_accounts[0].clone() 
+          }
         }
         OracleSetup::SwitchboardPull => {
-          let oracle = bank_oracle_accounts[0].clone();
-          OracleAccounts::SwitchboardPull { oracle }
+          OracleAccounts::SwitchboardPull { 
+            oracle: bank_oracle_accounts[0].clone() 
+          }
         }
         OracleSetup::StakedWithPythPush => {
-          let price = bank_oracle_accounts[0].clone();
-          let lst_mint_account = bank_oracle_accounts[1].clone();
-          let stake_state = bank_oracle_accounts[2].clone();
-          
-          let lst_mint = Mint::try_deserialize(&mut (&lst_mint_account.data as &[u8]))?;
+          let lst_mint = Mint::try_deserialize(&mut (&bank_oracle_accounts[1].data as &[u8]))?;
           OracleAccounts::StakedWithPythPush {
-            price,
+            price: bank_oracle_accounts[0].clone(),
             lst_mint,
-            stake_state,
+            stake_state: bank_oracle_accounts[2].clone(),
           }
         }
         OracleSetup::KaminoPythPush => {
-          let price = bank_oracle_accounts[0].clone();
-          let reserve = bank_oracle_accounts[1].clone();
-          OracleAccounts::KaminoPythPush { price, reserve }
+          OracleAccounts::KaminoPythPush {
+            price: bank_oracle_accounts[0].clone(),
+            reserve: bank_oracle_accounts[1].clone(),
+          }
         }
         OracleSetup::KaminoSwitchboardPull => {
-          let oracle = bank_oracle_accounts[0].clone();
-          let reserve = bank_oracle_accounts[1].clone();
-          OracleAccounts::KaminoSwitchboardPull { oracle, reserve }
+          OracleAccounts::KaminoSwitchboardPull {
+            oracle: bank_oracle_accounts[0].clone(),
+            reserve: bank_oracle_accounts[1].clone(),
+          }
         }
         OracleSetup::Fixed => OracleAccounts::None,
       };
@@ -235,7 +250,7 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
         max_age: max_ages[i],
       });
     }
-
+  
     Ok(configs)
   }
 
