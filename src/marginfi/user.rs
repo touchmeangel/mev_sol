@@ -145,7 +145,7 @@ impl MarginfiUserAccount {
         .context("asset maintenance value calculation failed")?;
     }
 
-    anyhow::Ok(total_asset_value)
+    anyhow::Ok(total_asset_value - total_liability_value)
   }
 
   pub fn get_bank(&self, pubkey: &Pubkey) -> Option<&Bank> {
