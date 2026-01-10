@@ -134,7 +134,7 @@ impl MarginfiUserAccount {
       let bank = self.banks.get(&balance.bank_pk)
         .ok_or_else(|| anyhow::anyhow!("Bank not found"))?;
       let asset_value = self.bank_asset_value(balance)?;
-      let liability_value = self.bank_asset_value(balance)?;
+      let liability_value = self.bank_liability_value(balance)?;
 
       let asset_weight: I80F48 = bank.bank.config.asset_weight_maint.into();
       let liability_weight: I80F48 = bank.bank.config.liability_weight_maint.into();
