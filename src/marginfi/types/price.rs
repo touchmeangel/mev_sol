@@ -393,29 +393,34 @@ pub struct SwitchboardPullPriceFeed {
 }
 
 impl SwitchboardPullPriceFeed {
-  pub fn load_checked(
-      account: &solana_account::Account,
-      current_timestamp: i64,
-      max_age: u64,
-  ) -> MarginfiResult<Self> {
-      let account_data = &account.data;
+    pub fn load_checked(
+        account: &solana_account::Account,
+        current_timestamp: i64,
+        max_age: u64,
+    ) -> MarginfiResult<Self> {
+        let account_data = &account.data;
 
-      let feed: PullFeedAccountData = parse_swb_ignore_alignment(account_data)?;
-      let lite_feed = LitePullFeedAccountData::from(&feed);
-      // TODO restore when swb fixes alignment issue in crate.
-      // let feed = PullFeedAccountData::parse(ai_data)
-      //     .map_err(|_| MarginfiError::SwitchboardInvalidAccount)?;
+        let feed: PullFeedAccountData = parse_swb_ignore_alignment(account_data)?;
+        let lite_feed = LitePullFeedAccountData::from(&feed);
+        // TODO restore when swb fixes alignment issue in crate.
+        // let feed = PullFeedAccountData::parse(ai_data)
+        //     .map_err(|_| MarginfiError::SwitchboardInvalidAccount)?;
 
-      // Check staleness
-      let last_updated = feed.last_update_timestamp;
-      if current_timestamp.saturating_sub(last_updated) > max_age as i64 {
-          return err!(MarginfiError::SwitchboardStalePrice);
-      }
+        // Check staleness
+        let last_updated = feed.last_update_timestamp;
+        let age = current_timestamp
+          .saturating_sub(last_updated);
+        let is_stale = age > max_age as i64;
+        msg!("current_timestamp: {}", current_timestamp);
+        msg!("age: {}", age);
+        if is_stale {
+          msg!("SwitchboardPull price is stale for {} secs!", age - max_age as i64)
+        }
 
-      Ok(Self {
-          feed: Box::new(lite_feed),
-      })
-  }
+        Ok(Self {
+            feed: Box::new(lite_feed),
+        })
+    }
 
   fn check_ais(account: &solana_account::Account) -> MarginfiResult {
       let account_data = &account.data;

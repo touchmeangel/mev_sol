@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use fixed::types::I80F48;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use anchor_lang::prelude::{Clock, Pubkey};
+use anchor_lang::prelude::{Clock, Pubkey, sysvar::clock};
 
 use crate::{marginfi::types::{Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, OraclePriceType, PriceAdapter}, utils::parse_account};
 
@@ -14,10 +14,16 @@ pub struct MarginfiUserAccount {
 }
 
 impl MarginfiUserAccount {
-  pub async fn from_pubkey(rpc_client: &RpcClient, account_pubkey: &Pubkey, clock: &Clock) -> anyhow::Result<Self> {
-    let account_data = rpc_client.get_account(account_pubkey).await?.data;
-    let account = parse_account::<MarginfiAccount>(&account_data)
+  pub async fn from_pubkey(rpc_client: &RpcClient, account_pubkey: Pubkey) -> anyhow::Result<Self> {
+    let pre_request_data = rpc_client.get_multiple_accounts(&[account_pubkey, clock::ID])
+      .await?
+      .into_iter()
+      .collect::<Option<Vec<_>>>()
+      .ok_or(anyhow::anyhow!("get_multiple_accounts failed"))?;
+
+    let account = parse_account::<MarginfiAccount>(&pre_request_data[0].data)
       .map_err(|e| anyhow::anyhow!("invalid account data: {}", e))?;
+    let clock: Clock = bincode::deserialize(&pre_request_data[1].data)?;
     
     let bank_pubkeys: Vec<Pubkey> = account
       .lending_account
@@ -36,7 +42,7 @@ impl MarginfiUserAccount {
       .collect::<Result<Vec<_>, _>>()
       .map_err(|e| anyhow::anyhow!("invalid bank data: {}", e))?;
 
-    let configs = OraclePriceFeedAdapterConfig::load_multiple_with_clock(rpc_client, &banks, clock).await?;
+    let configs = OraclePriceFeedAdapterConfig::load_multiple_with_clock(rpc_client, &banks, &clock).await?;
     let price_feeds = configs
       .into_iter()
       .map(|cfg| OraclePriceFeedAdapter::try_from_config(cfg))

@@ -8,22 +8,18 @@ mod macros;
 mod prelude;
 mod wrapped_i80f48;
 
-use anchor_lang::prelude::sysvar::clock;
 use fixed::types::I80F48;
 use instructions::*;
 use consts::*;
 pub use errors::*;
 use events::*;
-use solana_account_decoder::UiAccountEncoding;
-use solana_transaction_status_client_types::UiTransactionEncoding;
 use wrapped_i80f48::*;
 use user::*;
 
 use std::rc::Rc;
 
-use anchor_lang::prelude::{Clock, Pubkey};
 use anchor_client::solana_sdk::commitment_config::CommitmentConfig;
-use solana_rpc_client_types::config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter};
+use solana_rpc_client_types::config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_pubsub_client::nonblocking::pubsub_client::PubsubClient;
 use anchor_client::{Client, Cluster, Program};
@@ -37,8 +33,7 @@ pub struct Marginfi {
   pubsub: PubsubClient,
   rpc_client: RpcClient,
   client: Client<Rc<Keypair>>,
-  program: Program<Rc<Keypair>>,
-  clock: Clock
+  program: Program<Rc<Keypair>>
 }
 
 impl Marginfi {
@@ -49,10 +44,7 @@ impl Marginfi {
     let program = client.program(MARGINFI_PROGRAM_ID)?;
     let rpc_client = program.rpc();
 
-    let clock_data = rpc_client.get_account_data(&clock::ID).await?;
-    let clock: Clock = bincode::deserialize(&clock_data)?;
-
-    anyhow::Ok(Self { pubsub, rpc_client, client, program, clock })
+    anyhow::Ok(Self { pubsub, rpc_client, client, program })
   }
 
   pub async fn listen_for_targets(&self) -> anyhow::Result<()> {
@@ -81,7 +73,7 @@ impl Marginfi {
             println!("WITHDRAW!");
             println!("  Transaction: {}", signature);
             
-            self.handle_account(&event.header.marginfi_account).await?;
+            self.handle_account(event.header.marginfi_account).await?;
             println!();
           }
         }
@@ -91,9 +83,9 @@ impl Marginfi {
     anyhow::Ok(())
   }
 
-  async fn handle_account(&self, account_pubkey: &anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
+  async fn handle_account(&self, account_pubkey: anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
     let start = Instant::now();
-    let account = MarginfiUserAccount::from_pubkey(&self.rpc_client, account_pubkey, &self.clock).await?;
+    let account = MarginfiUserAccount::from_pubkey(&self.rpc_client, account_pubkey).await?;
     let marginfi_account = account.account();
     let duration = start.elapsed();
     println!("ACCOUNT DATA ({:?})", duration);
@@ -124,48 +116,57 @@ impl Marginfi {
     anyhow::Ok(())
   }
 
-  async fn lending_account_pulse_health(&self, account_pubkey: Pubkey) -> anyhow::Result<HealthCache> {
-    let tx = self.program.request()
-      .accounts(PulseHealthAccounts { marginfi_account: account_pubkey })
-      .args(PulseHealth)
-      .transaction()?;
+  // async fn lending_account_pulse_health(&self, account_pubkey: Pubkey) -> anyhow::Result<HealthCache> {
+  //   let tx = self.program.request()
+  //     .accounts(PulseHealthAccounts { marginfi_account: account_pubkey })
+  //     .args(PulseHealth)
+  //     .transaction()?;
 
-    let config = RpcSimulateTransactionConfig {
-      sig_verify: false,
-      replace_recent_blockhash: true,
-      commitment: Some(CommitmentConfig::processed()),
-      encoding: Some(UiTransactionEncoding::Base64),
-      accounts: Some(RpcSimulateTransactionAccountsConfig {
-        encoding: Some(UiAccountEncoding::Base64),
-        addresses: vec![],
-      }),
-      min_context_slot: None,
-      inner_instructions: true,
-    };
-    let simulation_result = self.rpc_client.simulate_transaction_with_config(&tx, config).await?;
-    if let Some(err) = simulation_result.value.err {
-      anyhow::bail!("HealthPulseEvent simulation failed with: {}", err)
-    }
+  //   let config = RpcSimulateTransactionConfig {
+  //     sig_verify: false,
+  //     replace_recent_blockhash: true,
+  //     commitment: Some(CommitmentConfig::processed()),
+  //     encoding: Some(UiTransactionEncoding::Base64),
+  //     accounts: Some(RpcSimulateTransactionAccountsConfig {
+  //       encoding: Some(UiAccountEncoding::Base64),
+  //       addresses: vec![],
+  //     }),
+  //     min_context_slot: None,
+  //     inner_instructions: true,
+  //   };
+  //   let simulation_result = self.rpc_client.simulate_transaction_with_config(&tx, config).await?;
+  //   if let Some(err) = simulation_result.value.err {
+  //     anyhow::bail!("HealthPulseEvent simulation failed with: {}", err)
+  //   }
 
-    if let Some(logs) = simulation_result.value.logs {
-      for log in logs {
-        if let Some(event_data) = log.strip_prefix("Program data: ") {
-          println!("Program data: {}", event_data);
-          if let Ok(event) = parse_anchor_event::<HealthPulseEvent>(event_data) {
-            return anyhow::Ok(event.health_cache);
-          }
-        }
-      }
-    }
+  //   if let Some(logs) = simulation_result.value.logs {
+  //     for log in logs {
+  //       if let Some(event_data) = log.strip_prefix("Program data: ") {
+  //         println!("Program data: {}", event_data);
+  //         if let Ok(event) = parse_anchor_event::<HealthPulseEvent>(event_data) {
+  //           return anyhow::Ok(event.health_cache);
+  //         }
+  //       }
+  //     }
+  //   }
 
-    anyhow::bail!("HealthPulseEvent not found after simulation")
-  }
+  //   anyhow::bail!("HealthPulseEvent not found after simulation")
+  // }
 
   // lending_account_liquidate // legacy
   // start_liquidation, end_liquidation // receivership
   // lending_account_pulse_health
 
   // Example:
+  // let (assets, liabs) =
+  //   self.get_account_health_components(RiskRequirementType::Maintenance, health_cache)?;
+
+  // let account_health = assets.checked_sub(liabs).ok_or_else(math_error!())?;
+  // let healthy = account_health > I80F48::ZERO;
+
+  // if let Some(cache) = health_cache {
+  //   cache.set_healthy(healthy);
+  // }
   // ```
   // Token A: Asset Weight Initial = 90%, Asset Weight Maintenance = 95%
   // Token B: Liability Weight Initial = 110%, Liability Weight Maintenance = 105%
