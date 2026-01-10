@@ -429,8 +429,6 @@ impl SwitchboardPullPriceFeed {
         let age = current_timestamp
           .saturating_sub(last_updated);
         let is_stale = age > max_age as i64;
-        msg!("current_timestamp: {}", current_timestamp);
-        msg!("age: {}", age);
         if is_stale {
           msg!("SwitchboardPull price is stale for {} secs!", age - max_age as i64)
         }
