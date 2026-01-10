@@ -73,7 +73,7 @@ impl Marginfi {
             println!("WITHDRAW!");
             println!("  Transaction: {}", signature);
             
-            self.handle_account(event.header.marginfi_account).await?;
+            self.handle_account(&event.header.marginfi_account).await?;
             println!();
           }
         }
@@ -83,7 +83,7 @@ impl Marginfi {
     anyhow::Ok(())
   }
 
-  async fn handle_account(&self, account_pubkey: anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
+  async fn handle_account(&self, account_pubkey: &anchor_lang::prelude::Pubkey) -> anyhow::Result<()> {
     let start = Instant::now();
     let account = MarginfiUserAccount::from_pubkey(&self.rpc_client, account_pubkey).await?;
     let marginfi_account = account.account();

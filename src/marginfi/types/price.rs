@@ -2,8 +2,10 @@ use super::super::consts::{
   MIN_PYTH_PUSH_VERIFICATION_LEVEL, NATIVE_STAKE_ID, PYTH_ID, SPL_SINGLE_POOL_ID,
   SWITCHBOARD_PULL_ID,
 };
+use anchor_lang::prelude::sysvar::clock;
 use anchor_lang::prelude::*;
 use anchor_client::solana_sdk::{borsh::try_from_slice_unchecked, stake::state::StakeStateV2};
+use solana_account::Account;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use crate::utils::parse_account;
 use crate::{check, check_eq, debug, live, math_error};
@@ -117,34 +119,44 @@ pub enum OracleAccounts {
 pub struct OraclePriceFeedAdapterConfig<'info> {
   bank: &'info Bank,
   accounts: OracleAccounts,
-  clock: &'info Clock,
+  clock: Clock,
   max_age: u64
 }
 
 impl<'info> OraclePriceFeedAdapterConfig<'info> {
-  pub async fn load_multiple_with_clock(
+  pub async fn load_multiple(
     client: &RpcClient,
-    banks: &'info [Bank],
-    clock: &'info Clock
+    banks: &'info [Bank]
   ) -> anyhow::Result<Vec<Self>> {
     let max_ages: Vec<u64> = banks
       .iter()
       .map(|bank| bank.config.get_oracle_max_age())
       .collect();
     
-    Self::load_multiple_with_clock_and_max_ages(client, banks, clock, &max_ages).await
+    Self::load_multiple_with_max_ages(client, banks, &max_ages).await
+  }
+
+  pub async fn load_multiple_with_max_ages(
+    client: &RpcClient,
+    banks: &'info [Bank],
+    max_ages: &[u64]
+  ) -> anyhow::Result<Vec<Self>> {
+    let clock_account = client.get_account(&clock::ID).await?;
+    let clock: Clock = bincode::deserialize(&clock_account.data)?;
+    
+    Self::load_multiple_with_clock_and_max_ages(client, banks, clock, max_ages).await
   }
 
   pub async fn load_multiple_with_clock_and_max_ages(
     client: &RpcClient,
     banks: &'info [Bank],
-    clock: &'info Clock,
+    clock: Clock,
     max_ages: &[u64]
   ) -> anyhow::Result<Vec<Self>> {
     if banks.len() != max_ages.len() {
       return Err(anyhow::anyhow!("banks and max_ages must have same length"));
     }
-  
+
     let mut oracle_key_to_index: std::collections::HashMap<Pubkey, usize> = std::collections::HashMap::new();
     let mut unique_oracle_keys = Vec::new();
     let mut bank_oracle_mappings = Vec::new();
@@ -152,28 +164,8 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
     for bank in banks {
       let mut bank_indices = Vec::new();
       
-      let keys = match bank.config.oracle_setup {
-        OracleSetup::None => {
-          return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
-        }
-        OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
-          return Err(anyhow::anyhow!(ErrorCode::Deprecated));
-        }
-        OracleSetup::PythPushOracle | OracleSetup::SwitchboardPull => {
-          vec![bank.config.oracle_keys[0]]
-        }
-        OracleSetup::StakedWithPythPush => {
-          bank.config.oracle_keys[0..3].to_vec()
-        }
-        OracleSetup::KaminoPythPush | OracleSetup::KaminoSwitchboardPull => {
-          bank.config.oracle_keys[0..2].to_vec()
-        }
-        OracleSetup::Fixed => {
-          vec![]
-        }
-      };
+      let keys = get_oracle_keys_for_bank(bank)?;
       
-      // Map each key to its index in unique_oracle_keys
       for key in keys {
         let idx = *oracle_key_to_index.entry(key).or_insert_with(|| {
           let idx = unique_oracle_keys.len();
@@ -185,14 +177,13 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
       
       bank_oracle_mappings.push(bank_indices);
     }
-  
-    // Step 2: Fetch all unique oracle accounts in one batch
+
     let oracle_accounts = if unique_oracle_keys.is_empty() {
       Vec::new()
     } else {
       get_multiple_accounts(client, &unique_oracle_keys).await?
     };
-  
+
     let mut configs = Vec::with_capacity(banks.len());
     
     for (i, bank) in banks.iter().enumerate() {
@@ -203,61 +194,23 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
         .map(|&idx| oracle_accounts[idx].clone())
         .collect();
       
-      let accounts = match bank.config.oracle_setup {
-        OracleSetup::None => {
-          return Err(anyhow::anyhow!(MarginfiError::OracleNotSetup));
-        }
-        OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
-          return Err(anyhow::anyhow!(ErrorCode::Deprecated));
-        }
-        OracleSetup::PythPushOracle => {
-          OracleAccounts::PythPush { 
-            price: bank_oracle_accounts[0].clone() 
-          }
-        }
-        OracleSetup::SwitchboardPull => {
-          OracleAccounts::SwitchboardPull { 
-            oracle: bank_oracle_accounts[0].clone() 
-          }
-        }
-        OracleSetup::StakedWithPythPush => {
-          let lst_mint = Mint::try_deserialize(&mut (&bank_oracle_accounts[1].data as &[u8]))?;
-          OracleAccounts::StakedWithPythPush {
-            price: bank_oracle_accounts[0].clone(),
-            lst_mint,
-            stake_state: bank_oracle_accounts[2].clone(),
-          }
-        }
-        OracleSetup::KaminoPythPush => {
-          OracleAccounts::KaminoPythPush {
-            price: bank_oracle_accounts[0].clone(),
-            reserve: bank_oracle_accounts[1].clone(),
-          }
-        }
-        OracleSetup::KaminoSwitchboardPull => {
-          OracleAccounts::KaminoSwitchboardPull {
-            oracle: bank_oracle_accounts[0].clone(),
-            reserve: bank_oracle_accounts[1].clone(),
-          }
-        }
-        OracleSetup::Fixed => OracleAccounts::None,
-      };
+      let accounts = build_oracle_accounts(bank, bank_oracle_accounts)?;
       
       configs.push(Self {
         bank,
         accounts,
-        clock,
+        clock: clock.clone(),
         max_age: max_ages[i],
       });
     }
-  
+
     Ok(configs)
   }
 
   pub async fn load_with_clock(
     client: &RpcClient,
     bank: &'info Bank,
-    clock: &'info Clock
+    clock: Clock
   ) -> anyhow::Result<Self> {
     Self::load_with_clock_and_max_age(client, bank, clock, bank.config.get_oracle_max_age()).await
   }
@@ -265,7 +218,7 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
   pub async fn load_with_clock_and_max_age(
     client: &RpcClient,
     bank: &'info Bank,
-    clock: &'info Clock,
+    clock: Clock,
     max_age: u64
   ) -> anyhow::Result<Self> {
     let mut configs = Self::load_multiple_with_clock_and_max_ages(
@@ -276,6 +229,71 @@ impl<'info> OraclePriceFeedAdapterConfig<'info> {
     ).await?;
     
     Ok(configs.remove(0))
+  }
+}
+
+fn get_oracle_keys_for_bank(bank: &Bank) -> anyhow::Result<Vec<Pubkey>> {
+  match bank.config.oracle_setup {
+    OracleSetup::None => {
+      Err(anyhow::anyhow!(MarginfiError::OracleNotSetup))
+    }
+    OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
+      Err(anyhow::anyhow!(ErrorCode::Deprecated))
+    }
+    OracleSetup::PythPushOracle | OracleSetup::SwitchboardPull => {
+      Ok(vec![bank.config.oracle_keys[0]])
+    }
+    OracleSetup::StakedWithPythPush => {
+      Ok(bank.config.oracle_keys[0..3].to_vec())
+    }
+    OracleSetup::KaminoPythPush | OracleSetup::KaminoSwitchboardPull => {
+      Ok(bank.config.oracle_keys[0..2].to_vec())
+    }
+    OracleSetup::Fixed => {
+      Ok(vec![])
+    }
+  }
+}
+
+fn build_oracle_accounts(bank: &Bank, accounts: Vec<Account>) -> anyhow::Result<OracleAccounts> {
+  match bank.config.oracle_setup {
+    OracleSetup::None => {
+      Err(anyhow::anyhow!(MarginfiError::OracleNotSetup))
+    }
+    OracleSetup::PythLegacy | OracleSetup::SwitchboardV2 => {
+      Err(anyhow::anyhow!(ErrorCode::Deprecated))
+    }
+    OracleSetup::PythPushOracle => {
+      Ok(OracleAccounts::PythPush { 
+        price: accounts[0].clone() 
+      })
+    }
+    OracleSetup::SwitchboardPull => {
+      Ok(OracleAccounts::SwitchboardPull { 
+        oracle: accounts[0].clone() 
+      })
+    }
+    OracleSetup::StakedWithPythPush => {
+      let lst_mint = Mint::try_deserialize(&mut (&accounts[1].data as &[u8]))?;
+      Ok(OracleAccounts::StakedWithPythPush {
+        price: accounts[0].clone(),
+        lst_mint,
+        stake_state: accounts[2].clone(),
+      })
+    }
+    OracleSetup::KaminoPythPush => {
+      Ok(OracleAccounts::KaminoPythPush {
+        price: accounts[0].clone(),
+        reserve: accounts[1].clone(),
+      })
+    }
+    OracleSetup::KaminoSwitchboardPull => {
+      Ok(OracleAccounts::KaminoSwitchboardPull {
+        oracle: accounts[0].clone(),
+        reserve: accounts[1].clone(),
+      })
+    }
+    OracleSetup::Fixed => Ok(OracleAccounts::None),
   }
 }
 
@@ -298,7 +316,7 @@ impl OraclePriceFeedAdapter {
               Ok(OraclePriceFeedAdapter::Fixed(FixedPriceFeed { price }))
           }
           OracleAccounts::PythPush { price } => {
-              let feed = PythPushOraclePriceFeed::load_checked(&price, config.clock, config.max_age)?;
+              let feed = PythPushOraclePriceFeed::load_checked(&price, &config.clock, config.max_age)?;
               Ok(OraclePriceFeedAdapter::PythPushOracle(feed))
           }
           OracleAccounts::SwitchboardPull { oracle } => {
@@ -320,7 +338,7 @@ impl OraclePriceFeedAdapter {
               let sol_pool_adjusted_balance =
                   sol_pool_balance.checked_sub(lamports_per_sol).ok_or_else(math_error!())?;
 
-              let mut feed = PythPushOraclePriceFeed::load_checked(&price, config.clock, config.max_age)?;
+              let mut feed = PythPushOraclePriceFeed::load_checked(&price, &config.clock, config.max_age)?;
               let lst_supply = lst_mint.supply;
               if lst_supply == 0 {
                   return Err(MarginfiError::ZeroSupplyInStakePool.into());
@@ -339,7 +357,7 @@ impl OraclePriceFeedAdapter {
               Ok(OraclePriceFeedAdapter::PythPushOracle(feed))
           }
           OracleAccounts::KaminoPythPush { price, reserve } => {
-              let mut price_feed = PythPushOraclePriceFeed::load_checked(&price, config.clock, config.max_age)?;
+              let mut price_feed = PythPushOraclePriceFeed::load_checked(&price, &config.clock, config.max_age)?;
               let (total_liq, total_col) = parse_account::<MinimalReserve>(&reserve.data)
                   .map_err(|_| ErrorCode::AccountDidNotDeserialize)?
                   .scaled_supplies()?;
