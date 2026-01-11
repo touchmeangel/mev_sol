@@ -114,7 +114,6 @@ impl MarginfiUserAccount {
         bank_asset_weight
       };
       let liability_weight: I80F48 = bank_account.bank.config.liability_weight_maint.into();
-      println!("aw: {}, lw: {}", asset_weight, liability_weight);
 
       total_asset_value += asset_value.checked_mul(asset_weight)
         .context("asset maintenance value calculation failed")?;
@@ -122,7 +121,6 @@ impl MarginfiUserAccount {
         .context("liability maintenance value calculation failed")?;
     }
 
-    println!("a: {}, l: {}", total_asset_value, total_liability_value);
     anyhow::Ok(total_asset_value - total_liability_value)
   }
 }
