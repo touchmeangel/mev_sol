@@ -136,7 +136,7 @@ pub struct BankAccount {
 
 impl BankAccount {
   pub fn asset_value(&self) -> anyhow::Result<I80F48> {
-    if self.balance.is_empty(BalanceSide::Liabilities) {
+    if self.balance.is_empty(BalanceSide::Assets) {
       return anyhow::Ok(I80F48::ZERO);
     }
     let price = self.price_feed.get_price_of_type(
