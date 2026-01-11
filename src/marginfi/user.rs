@@ -3,7 +3,7 @@ use fixed::types::I80F48;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use anchor_lang::prelude::{Pubkey};
 
-use crate::{marginfi::types::{Balance, Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, OraclePriceType, PriceAdapter, reconcile_emode_configs}, utils::parse_account};
+use crate::{marginfi::types::{Balance, BalanceSide, Bank, MarginfiAccount, OraclePriceFeedAdapter, OraclePriceFeedAdapterConfig, OraclePriceType, PriceAdapter, reconcile_emode_configs}, utils::parse_account};
 
 #[derive(Clone)]
 pub struct MarginfiUserAccount {
@@ -40,7 +40,7 @@ impl MarginfiUserAccount {
       .map(|cfg| OraclePriceFeedAdapter::try_from_config(cfg))
       .collect::<Result<Vec<_>, _>>()?;
 
-    let banks = banks
+    let banks: Vec<BankAccount> = banks
       .into_iter()
       .zip(account
         .lending_account
@@ -49,12 +49,12 @@ impl MarginfiUserAccount {
       .map(|((bank, balance), price_feed)| BankAccount { bank, price_feed, balance: *balance })
       .collect();
 
-    // let reconciled_emode_config = reconcile_emode_configs(
-    //   banks
-    //     .iter()
-    //     .filter(|b| !b.balance.is_empty(BalanceSide::Liabilities))
-    //     .map(|b| b.bank.load().unwrap().emode.emode_config),
-    // );
+    let reconciled_emode_config = reconcile_emode_configs(
+      banks
+        .iter()
+        .filter(|b| !b.balance.is_empty(BalanceSide::Liabilities))
+        .map(|b| b.bank.emode.emode_config),
+    );
 
     anyhow::Ok(Self {
       account,
@@ -124,6 +124,9 @@ pub struct BankAccount {
 
 impl BankAccount {
   pub fn asset_value(&self) -> anyhow::Result<I80F48> {
+    if self.balance.is_empty(BalanceSide::Liabilities) {
+      return anyhow::Ok(I80F48::ZERO);
+    }
     let price = self.price_feed.get_price_of_type(
       OraclePriceType::RealTime,
       Some(super::types::PriceBias::Low),
@@ -143,6 +146,9 @@ impl BankAccount {
   }
 
   pub fn liability_value(&self) -> anyhow::Result<I80F48> {
+    if self.balance.is_empty(BalanceSide::Liabilities) {
+      return anyhow::Ok(I80F48::ZERO);
+    }
     let price = self.price_feed.get_price_of_type(
       OraclePriceType::RealTime,
       Some(super::types::PriceBias::Low),
